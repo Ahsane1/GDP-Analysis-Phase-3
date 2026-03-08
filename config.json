@@ -1,25 +1,25 @@
 {
-  "dataset_path": "data/unseen_climate_data.csv",
+  "dataset_path": "data/students.csv.csv",
   "pipeline_dynamics": {
-    "input_delay_seconds": 0.05,
-    "core_parallelism": 3,
+    "input_delay_seconds": 0.0,
+    "core_parallelism": 1,
     "stream_queue_max_size": 50
   },
   "schema_mapping": {
-    "target_entity": "Region",
+    "target_entity": "Student",
     "columns": [
       {
-        "source_name": "Country Name",
+        "source_name": "Name",
         "internal_mapping": "entity_name",
         "data_type": "string"
       },
       {
-        "source_name": "Year",
+        "source_name": "Class",
         "internal_mapping": "time_period",
         "data_type": "integer"
       },
       {
-        "source_name": "Average_Temperature_C",
+        "source_name": "Marks",
         "internal_mapping": "metric_value",
         "data_type": "float"
       }
@@ -37,13 +37,13 @@
     "data_charts": [
       {
         "type": "real_time_line_graph_values",
-        "title": "Live Temperature Values",
+        "title": "Live Student Marks",
         "x_axis": "time_period",
         "y_axis": "metric_value"
       },
       {
         "type": "real_time_line_graph_average",
-        "title": "Live Temperature Running Average",
+        "title": "Live Marks Running Average",
         "x_axis": "time_period",
         "y_axis": "computed_metric"
       }

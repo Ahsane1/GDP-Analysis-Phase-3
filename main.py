@@ -3,6 +3,7 @@ import multiprocessing as mp
 from plugins.input import GenericCSVReader
 from core.worker import CoreWorker       # We will build this next!
 from telemetry import PipelineTelemetry  # We will build this last!
+from telemetry import PipelineTelemetry, LiveDashboard
 
 def bootstrap():
     # 1. Load the "Brain" (config.json)
@@ -41,11 +42,15 @@ def bootstrap():
     for p in processes:
         p.start()
         print(f"[MAIN] Started process: {p.name}")
-
-    # 6. Start the Telemetry Dashboard (The Observer)
-    # We pass the queues to the dashboard so it can independently peek at their sizes.
-    # We run the dashboard in the main thread because UI libraries (like Plotly/Dash) require it.
-    dashboard = PipelineTelemetry(config, raw_data_queue, processed_data_queue)
+        
+# 6. Start the Telemetry Dashboard (The Observer Pattern)
+    # First, create the Subject that watches the queues
+    telemetry_subject = PipelineTelemetry(config, raw_data_queue, processed_data_queue)
+    
+    # Second, create the Observer and hand it the Subject so it can subscribe
+    dashboard = LiveDashboard(telemetry_subject)
+    
+    # Finally, start the live animation!
     dashboard.start_monitoring()
 
     # 7. Wait for everything to finish (Cleanup)

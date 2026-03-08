@@ -71,4 +71,4 @@ class CoreWorker:
             
             # A tiny microscopic sleep to ensure we don't accidentally hog the CPU 
             # and let the other workers grab tickets too.
-            time.sleep(0.001)
+            time.sleep(0.1)
