@@ -1,120 +1,119 @@
-import time
 import hashlib
-import json
 
-# --- Same Hash Rules as Input ---
 SECRET_KEY = "sda_spring_2026_secure_key"
 ITERATIONS = 100000
 
 def generate_signature(raw_value_str: str, key: str, iterations: int) -> str:
-    """Re-calculates the hash to ensure the packet wasn't spoofed."""
     password_bytes = key.encode('utf-8')
     salt_bytes = raw_value_str.encode('utf-8')
-    hash_bytes = hashlib.pbkdf2_hmac('sha256', password_bytes, salt_bytes, ITERATIONS)
+    hash_bytes = hashlib.pbkdf2_hmac('sha256', password_bytes, salt_bytes, iterations)
     return hash_bytes.hex()
 
-
-# ==========================================
-# 1. THE CORE WORKER (SCATTER & VERIFY)
-# ==========================================
 class CoreWorker:
-    def _init_(self, config: dict, raw_queue, internal_gather_queue):
-        self.config = config
+    def __init__(self, config: dict, raw_queue, internal_gather_queue):
         self.raw_queue = raw_queue
         self.internal_gather_queue = internal_gather_queue
 
     def run(self):
-        print(f"[{self._class.name_}] Listening for packets...")
-        
+        print(f"[{self.__class__.__name__}] Listening for packets...")
         while True:
-            # 1. Pull the secure packet from the raw stream
-            packet = self.raw_queue.get()
-            
-            # Poison pill check
-            if packet is None:
-                print(f"[{self._class.name_}] Poison pill received. Shutting down.")
-                # Pass the pill down the line to the Gatherer!
-                self.internal_gather_queue.put(None) 
-                break
+            try:
+                packet = self.raw_queue.get()
+                if packet is None:
+                    self.internal_gather_queue.put(None) 
+                    break
+                    
+                if not isinstance(packet, dict):
+                    print(f"[{self.__class__.__name__}] Error: Received non-dictionary packet. Dropping.")
+                    continue
+
+                payload = packet.get("data", {})
+                metric = payload.get("metric_value")
+                expected_hash = packet.get("hash")
+                seq_id = packet.get("sequence_id", "UNKNOWN")
                 
-            payload = packet.get("data", {})
-            metric = payload.get("metric_value")
-            expected_hash = packet.get("hash")
-            
-            if metric is None or expected_hash is None:
-                continue
+                if metric is None or expected_hash is None:
+                    continue
 
-            # 2. ANTI-SPOOFING VERIFICATION
-            # Recalculate the hash based on the data we received
-            raw_value_str = f"{metric:.2f}"
-            calculated_hash = generate_signature(raw_value_str, SECRET_KEY, ITERATIONS)
-            
-            if calculated_hash != expected_hash:
-                print(f"[{self._class.name_}] 🚨 SPOOFED PACKET DETECTED! Dropping Sequence ID {packet['sequence_id']}")
-                continue # Skip this packet entirely!
+                if not isinstance(metric, (int, float)):
+                    print(f"[CORE WARNING] Metric is not a number for Seq ID {seq_id}. Dropping.")
+                    continue
                 
-            # 3. IF AUTHENTIC, PUSH TO GATHERER
-            # The worker did the heavy CPU work (the hash verification). 
-            # Now we send the safe data to the Gatherer to be sorted.
-            self.internal_gather_queue.put(packet)
+                raw_value_str = f"{metric:.2f}"
+                calculated_hash = generate_signature(raw_value_str, SECRET_KEY, ITERATIONS)
+                
+                if calculated_hash != expected_hash:
+                    print(f"[CORE WARNING] 🚨 SPOOFED OR CORRUPT PACKET! Dropping Sequence ID {seq_id}")
+                    # THE FIX: Tell the gatherer to skip this ID!
+                    self.internal_gather_queue.put({"sequence_id": seq_id, "skip": True})
+                    continue 
+                    
+                self.internal_gather_queue.put(packet)
 
+            except Exception as e:
+                print(f"[CORE ERROR] Unexpected error processing packet: {e}")
 
-# ==========================================
-# 2. THE GATHERER (SORT & SLIDING WINDOW)
-# ==========================================
 class Gatherer:
-    def _init_(self, config: dict, internal_gather_queue, processed_queue):
+    def __init__(self, config: dict, internal_gather_queue, processed_queue):
         self.internal_gather_queue = internal_gather_queue
         self.processed_queue = processed_queue
-        self.window_size = config["processing"]["running_average_window_size"]
-        
-        # This dictionary is our "pocket" to hold out-of-order tickets
+        self.window_size = config.get("processing", {}).get("running_average_window_size", 10)
+        self.active_workers = config.get("pipeline_dynamics", {}).get("core_parallelism", 1)
         self.out_of_order_buffer = {} 
         self.expected_sequence_id = 1
         self.sliding_window = []
 
+
+ 
     def run(self):
         print(f"[GATHERER] Started sorting and calculating averages...")
-        active_workers = self.config["pipeline_dynamics"]["core_parallelism"]
         poison_pills_received = 0
         
         while True:
-            packet = self.internal_gather_queue.get()
-            
-            if packet is None:
-                poison_pills_received += 1
-                # Only shut down when ALL core workers have finished sending their pills
-                if poison_pills_received == active_workers:
-                    self.processed_queue.put(None) # Tell the dashboard we are done
-                    break
-                continue
-                
-            # 1. Store the packet in our temporary buffer
-            seq_id = packet["sequence_id"]
-            self.out_of_order_buffer[seq_id] = packet
-            
-            # 2. Process all packets that are now in perfect order!
-            while self.expected_sequence_id in self.out_of_order_buffer:
-                # Pull the correct packet out of the buffer
-                ready_packet = self.out_of_order_buffer.pop(self.expected_sequence_id)
-                metric = ready_packet["data"]["metric_value"]
-                
-                # --- PURE FUNCTIONAL SLIDING WINDOW ---
-                # Add the new metric
-                self.sliding_window.append(metric)
-                
-                # Trim the window if it gets too big (e.g., larger than 10)
-                if len(self.sliding_window) > self.window_size:
-                    self.sliding_window.pop(0) # Remove the oldest item
+            try:
+                packet = self.internal_gather_queue.get()
+                if packet is None:
+                    poison_pills_received += 1
+                    if poison_pills_received >= self.active_workers:
+                        print("[GATHERER] All workers finished. Shutting down.")
+                        self.processed_queue.put(None)
+                        break
+                    continue
                     
-                # Calculate the mathematical average
-                computed_avg = sum(self.sliding_window) / len(self.sliding_window)
-                
-                # Attach the answer to the packet
-                ready_packet["computed_metric"] = computed_avg
-                
-                # Push the perfectly sorted, averaged packet to the Output!
-                self.processed_queue.put(ready_packet)
-                
-                # Move to the next ticket number
+                seq_id = packet.get("sequence_id")
+                if seq_id is None:
+                    print("[GATHERER WARNING] Packet missing sequence_id. Dropping.")
+                    continue
+
+                self.out_of_order_buffer[seq_id] = packet
+
+                while self.expected_sequence_id in self.out_of_order_buffer:
+                    ready_packet = self.out_of_order_buffer.pop(self.expected_sequence_id)
+
+                    if ready_packet.get("skip"):
+                        self.expected_sequence_id += 1
+                        continue
+                    
+                    
+                    try:
+                        metric = ready_packet["data"]["metric_value"]
+                        if isinstance(metric, (int, float)):
+                            self.sliding_window.append(metric)
+                    except KeyError:
+                        self.expected_sequence_id += 1
+                        continue
+
+                    if len(self.sliding_window) > self.window_size:
+                        self.sliding_window.pop(0) 
+                        
+                    if len(self.sliding_window) > 0:
+                        computed_avg = sum(self.sliding_window) / len(self.sliding_window)
+                        ready_packet["computed_metric"] = computed_avg
+                        self.processed_queue.put(ready_packet)
+                    
+                    self.expected_sequence_id += 1
+                    
+            except Exception as e:
+                print(f"[GATHERER ERROR] Unexpected error: {e}")
+                # Increment to prevent pipeline jam if a packet totally breaks
                 self.expected_sequence_id += 1

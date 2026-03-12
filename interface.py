@@ -2,27 +2,21 @@ from abc import ABC, abstractmethod
 
 class Observer(ABC):
     @abstractmethod
-    def update(self, raw_size: int, processed_size: int):
-        """
-        CONTRACT: Any dashboard MUST have an update method 
-        that accepts the sizes of the two queues.
-        """
+    def update(self, state: dict):
         pass
 
 class Subject(ABC):
-    def _init_(self):
+    def __init__(self):
         self._observers = []
 
-    def add_observer(self, observer: Observer):
-        self._observers.append(observer)
+    def attach(self, observer: Observer):
+        if observer not in self._observers:
+            self._observers.append(observer)
 
-    def remove_observer(self, observer: Observer):
-        self._observers.remove(observer)
+    def detach(self, observer: Observer):
+        if observer in self._observers:
+            self._observers.remove(observer)
 
     @abstractmethod
-    def notify_observers(self):
-        """
-        CONTRACT: The telemetry monitor MUST have a way 
-        to shout out to all its subscribers.
-        """
+    def notify_observers(self, state: dict):
         pass
