@@ -2,29 +2,33 @@ import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 import queue
 
+# Import our new abstract blueprints!
+from interface import Subject, Observer
+
 # ==========================================
 # 1. THE SUBJECT (The YouTuber)
 # ==========================================
-class PipelineTelemetry:
-    def __init__(self, config, raw_queue, processed_queue):
+class PipelineTelemetry(Subject): # <-- Inherits from Abstract Subject
+    def _init_(self, config, raw_queue, processed_queue):
+        super()._init_() # Initializes the self._observers list from the parent class
         self.config = config
         self.raw_queue = raw_queue
         self.processed_queue = processed_queue
         self.max_size = config["pipeline_dynamics"]["stream_queue_max_size"]
-        self.observers = []  # List of subscribers
 
-    def attach(self, observer):
-        """Allows a dashboard to subscribe to updates."""
-        self.observers.append(observer)
+    def notify_observers(self, state: dict):
+        """Satisfies the Subject contract: Broadcasts state to all subscribers."""
+        for observer in self._observers:
+            observer.update(state)
 
     def poll_queues(self):
-        """Checks the pipes and broadcasts the data to subscribers."""
+        """Checks the pipes and triggers the notification."""
         try:
             # Check how full the ticket rails are
             raw_size = self.raw_queue.qsize()
             processed_size = self.processed_queue.qsize()
         except NotImplementedError:
-            # Fallback for some Mac OS systems that block qsize()
+            # Fallback for some OS systems that block qsize()
             raw_size, processed_size = 0, 0
 
         # Grab all finished math out of the processed queue for plotting
@@ -45,14 +49,15 @@ class PipelineTelemetry:
             "max_size": self.max_size,
             "new_data": new_data
         }
-        for observer in self.observers:
-            observer.update(state)
+        
+        # Call our new abstract method!
+        self.notify_observers(state)
 
 # ==========================================
 # 2. THE OBSERVER (The Subscriber / Dashboard)
 # ==========================================
-class LiveDashboard:
-    def __init__(self, telemetry_subject):
+class LiveDashboard(Observer): # <-- Inherits from Abstract Observer
+    def _init_(self, telemetry_subject):
         self.telemetry = telemetry_subject
         self.telemetry.attach(self) # Subscribe!
         
@@ -71,17 +76,19 @@ class LiveDashboard:
         self.fig, (self.ax_queues, self.ax_chart) = plt.subplots(2, 1, figsize=(10, 8))
         self.fig.canvas.manager.set_window_title("Phase 3: Real-Time Telemetry")
 
-    def update(self, state):
-        """Reacts to the YouTuber's broadcast by saving the new data."""
+    def update(self, state: dict):
+        """Satisfies the Observer contract: Reacts to the broadcast."""
         self.raw_fill = state["raw_size"]
         self.proc_fill = state["processed_size"]
         self.max_q = state["max_size"]
         
         # Save the new data packets into our lists for plotting
         for packet in state["new_data"]:
-            self.time_x.append(packet.get("time_period", 0))
-            self.raw_y.append(packet.get("metric_value", 0))
-            self.avg_y.append(packet.get("computed_metric", 0))
+            # NOTE: We access the nested "data" dictionary because of our new secure packet structure
+            payload = packet.get("data", {})
+            self.time_x.append(payload.get("time_period", 0))
+            self.raw_y.append(payload.get("metric_value", 0))
+            self.avg_y.append(packet.get("computed_metric", 0)) # Computed metric is attached to the main packet
             
             # Keep the lists from getting infinitely long (scrolling effect)
             if len(self.time_x) > self.memory_limit:
@@ -100,7 +107,7 @@ class LiveDashboard:
             return 'red'     # Heavy backpressure!
 
     def animate(self, frame):
-        """The 'Flipbook' function. Matplotlib calls this 10 times a second to redraw the screen."""
+        """The 'Flipbook' function. Matplotlib calls this to redraw the screen."""
         self.telemetry.poll_queues() # Ask the subject to check the pipes
 
         # --- 1. Draw Telemetry (Queue Health) ---
@@ -120,7 +127,6 @@ class LiveDashboard:
         self.ax_chart.set_title("Live Temperature & Running Average", fontweight="bold")
         
         if len(self.time_x) > 0:
-            # We use fake x-axis numbers (1, 2, 3...) so the graph flows smoothly left to right
             x_scroll = list(range(len(self.time_x)))
             self.ax_chart.plot(x_scroll, self.raw_y, label='Raw Temp', color='lightblue', marker='o')
             self.ax_chart.plot(x_scroll, self.avg_y, label='Running Avg (Window=10)', color='red', linewidth=2)
@@ -132,6 +138,5 @@ class LiveDashboard:
 
     def start_monitoring(self):
         """Starts the live animation loop."""
-        # interval=100 means update every 100 milliseconds
         self.ani = animation.FuncAnimation(self.fig, self.animate, interval=100, cache_frame_data=False)
         plt.show()
