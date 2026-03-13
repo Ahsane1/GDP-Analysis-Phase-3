@@ -7,7 +7,7 @@ from core.worker import CoreWorker, Gatherer
 from telemetry import PipelineTelemetry, LiveDashboard
 
 def validate_config(config):
-    """Fails fast if the config.json is missing any mandatory keys."""
+    """Fails immediately if the config.json is missing any mandatory keys."""
     try:
         # Check top level
         _ = config["dataset_path"]
