@@ -13,10 +13,6 @@ class Subject(ABC):
         if observer not in self._observers:
             self._observers.append(observer)
 
-    def detach(self, observer: Observer):
-        if observer in self._observers:
-            self._observers.remove(observer)
-
     @abstractmethod
     def notify_observers(self, state: dict):
         pass
