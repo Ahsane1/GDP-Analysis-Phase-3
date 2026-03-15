@@ -1,0 +1,42 @@
+@startuml
+actor Orchestrator as Main
+participant "Input\n(plugins.input)" as Input
+queue "Raw Stream\n(Queue)" as RawQ
+collections "Workers\n(core.worker)" as Workers
+queue "Internal Stream\n(Queue)" as GatherQ
+participant "Gatherer\n(core.worker)" as Gatherer
+queue "Processed Stream\n(Queue)" as ProcQ
+participant "Telemetry\n(Subject)" as Telemetry
+participant "Dashboard\n(Observer)" as Dashboard
+
+Main -> Input : Start Process
+Main -> Workers : Start N Processes
+Main -> Gatherer : Start Process
+Main -> Dashboard : start_monitoring()
+
+loop File Reading
+    Input -> Input : Cast data & Hash
+    Input -> RawQ : put(Secure Packet)
+end
+
+loop Parallel Execution
+    RawQ <- Workers : get()
+    Workers -> Workers : verify_signature()
+    Workers -> GatherQ : put(Verified Packet)
+end
+
+loop Sequence Sorting
+    GatherQ <- Gatherer : get()
+    Gatherer -> Gatherer : Sort by sequence_id
+    Gatherer -> Gatherer : calculate_sliding_window()
+    Gatherer -> ProcQ : put(Processed Packet)
+end
+
+loop Every Animation Frame
+    Dashboard -> Telemetry : poll_queues()
+    Telemetry -> RawQ : qsize()
+    Telemetry -> ProcQ : get_nowait()
+    Telemetry -> Dashboard : update(state: dict)
+    Dashboard -> Dashboard : render graphs
+end
+@enduml

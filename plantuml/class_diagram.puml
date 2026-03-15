@@ -1,0 +1,40 @@
+@startuml
+skinparam classAttributeIconSize 0
+
+package "interface" {
+    abstract class Subject {
+      # _observers: List<Observer>
+      + attach(observer: Observer): void
+      + {abstract} notify_observers(state: dict): void
+    }
+
+    abstract class Observer {
+      + {abstract} update(state: dict): void
+    }
+}
+
+package "telemetry" {
+    class PipelineTelemetry {
+      - raw_queue: Queue
+      - processed_queue: Queue
+      - max_size: int
+      + poll_queues(): void
+      + notify_observers(state: dict): void
+    }
+
+    class LiveDashboard {
+      - telemetry: Subject
+      - fig: Figure
+      + update(state: dict): void
+      + animate(frame: int): void
+      + start_monitoring(): void
+    }
+}
+
+Subject <|-- PipelineTelemetry
+Observer <|-- LiveDashboard
+Subject "1" *-- "many" Observer : notifies >
+LiveDashboard --> PipelineTelemetry : subscribes to
+@enduml
+
+
