@@ -1,7 +1,7 @@
+import os 
+import queue
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
-import queue
-import os 
 from interface import Subject, Observer
 
 class PipelineTelemetry(Subject):
@@ -26,13 +26,13 @@ class PipelineTelemetry(Subject):
             raw_size, processed_size = 0, 0
 
         new_data = []
-        shutdown_signal = False  # <-- Add this flag
+        shutdown_signal = False  # <-- Catch the poison pill
         
         while not self.processed_queue.empty():
             try:
                 packet = self.processed_queue.get_nowait()
                 if packet is None: 
-                    shutdown_signal = True # <-- Catch the poison pill!
+                    shutdown_signal = True 
                     continue
                 new_data.append(packet)
             except queue.Empty:
@@ -43,13 +43,9 @@ class PipelineTelemetry(Subject):
             "processed_size": processed_size,
             "max_size": self.max_size,
             "new_data": new_data,
-            "shutdown": shutdown_signal  # <-- Add it to the state dictionary
+            "shutdown": shutdown_signal  
         }
         self.notify_observers(state)
-
-
-
-        
 
 class LiveDashboard(Observer):
     def __init__(self, telemetry_subject, config):
@@ -66,7 +62,13 @@ class LiveDashboard(Observer):
         self.chart_title = f"{charts_cfg[0]['title']} & {charts_cfg[1]['title']}"
         self.y_axis_label = charts_cfg[0]["y_axis"]
 
+        # --- DARK THEME SETUP ---
+        plt.style.use('dark_background')  
         self.fig, (self.ax_queues, self.ax_chart) = plt.subplots(2, 1)
+        
+        # Set specific deep black backgrounds
+        self.fig.patch.set_facecolor('#000000') 
+        
         self.fig.subplots_adjust(left=0.08, right=0.95, top=0.92, bottom=0.25, hspace=0.4)
         self.fig.canvas.manager.set_window_title("Phase 3: Real-Time Telemetry")
 
@@ -78,14 +80,44 @@ class LiveDashboard(Observer):
     def update(self, state: dict):
 
         if state.get("shutdown"):
-            # Use a custom flag to ensure we only print and pause once
+            self.raw_fill = 0
+            self.proc_fill = 0
+        else:
+            self.raw_fill = state.get("raw_size", 0)
+            self.proc_fill = state.get("processed_size", 0)
+            
+        self.max_q = state.get("max_size", 1)
+        
+        if state.get("shutdown"):
+            # Ensure we only print, draw text, and pause once
             if not getattr(self, '_is_finished', False):
                 self._is_finished = True
                 print("\n[DASHBOARD] Pipeline empty. Processing complete!")
                 print("[DASHBOARD] The graph will remain open for analysis. Close the window to exit.")
                 
                 try:
-                    # Safely pause the animation without destroying the underlying timer
+                    # --- DRAW THE "FINISHED" OVERLAY ---
+                    self.fig.text(
+                        0.5, 0.5, 'PIPELINE PROCESSING COMPLETE', 
+                        horizontalalignment='center', 
+                        verticalalignment='center', 
+                        fontsize=22, 
+                        fontweight='bold',
+                        color='#00ff88', # Neon Green text
+                        bbox=dict(
+                            facecolor='#000000', 
+                            alpha=0.85, 
+                            edgecolor='#00ff88', 
+                            boxstyle='round,pad=1',
+                            linewidth=2
+                        ),
+                        zorder=100 # Ensure it draws on top of everything
+                    )
+                    
+                    # Force the canvas to draw the text before we pause the animation
+                    self.fig.canvas.draw()
+                    
+                    # Safely pause the animation 
                     if hasattr(self, 'ani'):
                         self.ani.pause() 
                     
@@ -94,7 +126,6 @@ class LiveDashboard(Observer):
                 except Exception as e:
                     pass
             
-            # Keep the window alive
             return
         
         self.raw_fill = state.get("raw_size", 0)
@@ -121,16 +152,23 @@ class LiveDashboard(Observer):
                 pass
 
     def _get_color(self, size, max_size):
-        if max_size <= 0: return 'green'
+        if max_size <= 0: return '#00ff88' 
         ratio = size / max_size
-        if ratio < 0.5: return 'green'
-        elif ratio < 0.8: return 'yellow'
-        else: return 'red'
+        if ratio < 0.5: return '#00ff88'
+        elif ratio < 0.8: return '#ffcc00' 
+        else: return '#ff3366'             
 
     def animate(self, frame):
+        # Stop trying to draw new frames if the pipeline is finished
+        if getattr(self, '_is_finished', False):
+            return 
+
         try:
             self.telemetry.poll_queues()
+            
+            # --- QUEUES CHART ---
             self.ax_queues.clear()
+            self.ax_queues.set_facecolor('#111111') 
             self.ax_queues.set_title("Live Pipeline Telemetry (Backpressure Monitor)", fontweight="bold")
             self.ax_queues.set_ylim(0, self.max_q if self.max_q > 0 else 50)
             
@@ -140,16 +178,21 @@ class LiveDashboard(Observer):
             
             self.ax_queues.bar(labels, sizes, color=colors)
             self.ax_queues.set_ylabel("Items in Queue")
+            self.ax_queues.grid(True, color='#333333', linestyle='--', alpha=0.7) 
 
+            # --- METRICS CHART ---
             self.ax_chart.clear()
+            self.ax_chart.set_facecolor('#111111') 
             self.ax_chart.set_title(self.chart_title, fontweight="bold")
             
             if len(self.time_x) > 0 and len(self.time_x) == len(self.raw_y) == len(self.avg_y):
                 x_scroll = list(range(len(self.time_x)))
-                self.ax_chart.plot(x_scroll, self.raw_y, label='Raw Value', color='lightblue', marker='o')
-                self.ax_chart.plot(x_scroll, self.avg_y, label='Running Avg', color='red', linewidth=2)
-                self.ax_chart.legend(loc="upper left")
+                self.ax_chart.plot(x_scroll, self.raw_y, label='Raw Value', color='cyan', marker='o')
+                self.ax_chart.plot(x_scroll, self.avg_y, label='Running Avg', color='#ff3366', linewidth=2)
+                
+                self.ax_chart.legend(loc="upper left", facecolor='#000000', edgecolor='#444444')
                 self.ax_chart.set_ylabel(self.y_axis_label)
+                self.ax_chart.grid(True, color='#333333', linestyle='--', alpha=0.7) 
 
         except Exception as e:
             print(f"[ANIMATION ERROR] Graph failed to draw frame: {e}")
